@@ -26,6 +26,13 @@ def save_gifts(gifts):
         json.dump(gifts, f, ensure_ascii=False, indent=2)
 
 
+# ------------------ Кнопка "Назад" ------------------
+def back_keyboard():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel"))
+    return kb
+
+
 # ------------------ Команда /start ------------------
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
@@ -50,8 +57,9 @@ async def show_gifts(call: types.CallbackQuery):
     text = "<b>🎁 Список подарков:</b>\n\n"
 
     for idx, gift in enumerate(gifts, start=1):
-        text += f"{idx}. <b>{gift['name']}</b>\n"
-        text += f"🔗 <a href=\"{gift['url']}\">Ссылка на подарок</a>\n\n"
+        taken_mark = " ✔️ (куплено)" if gift.get("taken") else ""
+        text += f"{idx}. <b>{gift['name']}</b>{taken_mark}\n"
+        text += f"🔗 <a href=\"{gift['url']}\">Открыть ссылку</a>\n\n"
 
     await call.message.answer(text)
 
@@ -64,6 +72,8 @@ async def admin_panel(call: types.CallbackQuery):
 
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("➕ Добавить подарок", callback_data="add_gift"))
+    keyboard.add(InlineKeyboardButton("✏️ Редактировать", callback_data="edit_gift"))
+    keyboard.add(InlineKeyboardButton("🛒 Куплено / Не куплено", callback_data="toggle_buy"))
     keyboard.add(InlineKeyboardButton("➖ Удалить подарок", callback_data="remove_gift"))
     keyboard.add(InlineKeyboardButton("📄 Показать подарки", callback_data="show_gifts"))
 
@@ -77,10 +87,8 @@ async def add_gift_start(call: types.CallbackQuery):
         return
 
     await call.message.answer(
-        "Введите подарок в формате:\n\n"
-        "<b>Название | https://ссылка</b>\n\n"
-        "Пример:\n"
-        "Наушники Sony | https://example.com/item"
+        "Введите подарок в формате:\n\n<b>Название | https://ссылка</b>",
+        reply_markup=back_keyboard()
     )
 
     dp.register_message_handler(add_gift_finish, state=None)
@@ -90,12 +98,12 @@ async def add_gift_finish(message: types.Message):
     text = message.text.strip()
 
     if "|" not in text:
-        return await message.answer("❌ Неверный формат. Используйте:\nНазвание | ссылка")
+        return await message.answer("❌ Неверный формат.\nПример: Наушники | https://...")
 
     name, url = [x.strip() for x in text.split("|", 1)]
 
     gifts = load_gifts()
-    gifts.append({"name": name, "url": url})
+    gifts.append({"name": name, "url": url, "taken": False})
     save_gifts(gifts)
 
     await message.answer(f"🎉 Подарок добавлен:\n<b>{name}</b>\n🔗 {url}")
@@ -117,11 +125,9 @@ async def remove_gift_start(call: types.CallbackQuery):
 
     for idx, gift in enumerate(gifts):
         keyboard.add(
-            InlineKeyboardButton(
-                f"Удалить «{gift['name']}»",
-                callback_data=f"del_{idx}"
-            )
+            InlineKeyboardButton(f"Удалить «{gift['name']}»", callback_data=f"del_{idx}")
         )
+    keyboard.add(InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel"))
 
     await call.message.answer("Выберите подарок для удаления:", reply_markup=keyboard)
 
@@ -131,7 +137,6 @@ async def remove_gift_finish(call: types.CallbackQuery):
     idx = int(call.data.replace("del_", ""))
 
     gifts = load_gifts()
-
     if idx >= len(gifts):
         return await call.message.answer("❌ Ошибка: подарок не найден.")
 
@@ -139,6 +144,87 @@ async def remove_gift_finish(call: types.CallbackQuery):
     save_gifts(gifts)
 
     await call.message.answer(f"🗑 Подарок удалён:\n<b>{removed['name']}</b>")
+
+
+# ------------------ Отметить как купленный ------------------
+@dp.callback_query_handler(lambda c: c.data == "toggle_buy")
+async def toggle_buy_list(call: types.CallbackQuery):
+    gifts = load_gifts()
+    if not gifts:
+        return await call.message.answer("Список пуст.")
+
+    kb = InlineKeyboardMarkup()
+    for idx, g in enumerate(gifts):
+        mark = "✔️" if g.get("taken") else "❌"
+        kb.add(InlineKeyboardButton(f"{mark} {g['name']}", callback_data=f"buy_{idx}"))
+
+    kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel"))
+
+    await call.message.answer("Выберите подарок:", reply_markup=kb)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("buy_"))
+async def toggle_buy_finish(call: types.CallbackQuery):
+    idx = int(call.data.replace("buy_", ""))
+    gifts = load_gifts()
+
+    gifts[idx]["taken"] = not gifts[idx].get("taken")
+    save_gifts(gifts)
+
+    state = "куплен" if gifts[idx]["taken"] else "не куплен"
+    await call.message.answer(f"🛒 Статус обновлён: <b>{gifts[idx]['name']}</b> — {state}")
+
+
+# ------------------ Редактирование подарка ------------------
+edit_memory = {}  # временное хранилище
+
+
+@dp.callback_query_handler(lambda c: c.data == "edit_gift")
+async def edit_choose(call: types.CallbackQuery):
+    gifts = load_gifts()
+
+    kb = InlineKeyboardMarkup()
+    for idx, g in enumerate(gifts):
+        kb.add(InlineKeyboardButton(g["name"], callback_data=f"edit_{idx}"))
+
+    kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel"))
+
+    await call.message.answer("Выберите подарок для редактирования:", reply_markup=kb)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("edit_"))
+async def edit_start(call: types.CallbackQuery):
+    idx = int(call.data.replace("edit_", ""))
+    edit_memory[call.from_user.id] = idx
+
+    await call.message.answer(
+        "Введите новый формат:\n<b>Название | ссылка</b>",
+        reply_markup=back_keyboard()
+    )
+
+    dp.register_message_handler(edit_finish, state=None)
+
+
+async def edit_finish(message: types.Message):
+    idx = edit_memory.get(message.from_user.id)
+    if idx is None:
+        return
+
+    text = message.text.strip()
+    if "|" not in text:
+        return await message.answer("❌ Неверный формат.")
+
+    name, url = [x.strip() for x in text.split("|", 1)]
+
+    gifts = load_gifts()
+    gifts[idx]["name"] = name
+    gifts[idx]["url"] = url
+
+    save_gifts(gifts)
+    await message.answer("✏️ Подарок обновлён!")
+
+    dp.message_handlers.unregister(edit_finish)
+    del edit_memory[message.from_user.id]
 
 
 # ------------------ Запуск ------------------
