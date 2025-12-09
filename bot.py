@@ -5,9 +5,9 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))  # ID админа из переменных окружения
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
 dp = Dispatcher(bot)
 
 GIFTS_FILE = "gifts.json"
@@ -47,10 +47,13 @@ async def show_gifts(call: types.CallbackQuery):
         await call.message.answer("🎁 Список подарков пуст.")
         return
 
-    text = "🎁 *Список подарков:*\n\n"
-    text += "\n".join(f"• {g}" for g in gifts)
+    text = "<b>🎁 Список подарков:</b>\n\n"
 
-    await call.message.answer(text, parse_mode="Markdown")
+    for idx, gift in enumerate(gifts, start=1):
+        text += f"{idx}. <b>{gift['name']}</b>\n"
+        text += f"🔗 <a href=\"{gift['url']}\">Ссылка на подарок</a>\n\n"
+
+    await call.message.answer(text)
 
 
 # ------------------ Админка ------------------
@@ -72,17 +75,31 @@ async def admin_panel(call: types.CallbackQuery):
 async def add_gift_start(call: types.CallbackQuery):
     if call.from_user.id != ADMIN_ID:
         return
-    await call.message.answer("Введите название подарка:")
+
+    await call.message.answer(
+        "Введите подарок в формате:\n\n"
+        "<b>Название | https://ссылка</b>\n\n"
+        "Пример:\n"
+        "Наушники Sony | https://example.com/item"
+    )
+
     dp.register_message_handler(add_gift_finish, state=None)
 
 
 async def add_gift_finish(message: types.Message):
-    gift = message.text.strip()
+    text = message.text.strip()
+
+    if "|" not in text:
+        return await message.answer("❌ Неверный формат. Используйте:\nНазвание | ссылка")
+
+    name, url = [x.strip() for x in text.split("|", 1)]
+
     gifts = load_gifts()
-    gifts.append(gift)
+    gifts.append({"name": name, "url": url})
     save_gifts(gifts)
 
-    await message.answer(f"🎉 Подарок добавлен:\n{gift}")
+    await message.answer(f"🎉 Подарок добавлен:\n<b>{name}</b>\n🔗 {url}")
+
     dp.message_handlers.unregister(add_gift_finish)
 
 
@@ -94,24 +111,34 @@ async def remove_gift_start(call: types.CallbackQuery):
 
     gifts = load_gifts()
     if not gifts:
-        await call.message.answer("Список пуст.")
-        return
+        return await call.message.answer("❗ Список пуст.")
 
     keyboard = InlineKeyboardMarkup()
-    for g in gifts:
-        keyboard.add(InlineKeyboardButton(f"Удалить «{g}»", callback_data=f"del_{g}"))
+
+    for idx, gift in enumerate(gifts):
+        keyboard.add(
+            InlineKeyboardButton(
+                f"Удалить «{gift['name']}»",
+                callback_data=f"del_{idx}"
+            )
+        )
 
     await call.message.answer("Выберите подарок для удаления:", reply_markup=keyboard)
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("del_"))
 async def remove_gift_finish(call: types.CallbackQuery):
-    gift = call.data.replace("del_", "")
+    idx = int(call.data.replace("del_", ""))
+
     gifts = load_gifts()
-    gifts = [g for g in gifts if g != gift]
+
+    if idx >= len(gifts):
+        return await call.message.answer("❌ Ошибка: подарок не найден.")
+
+    removed = gifts.pop(idx)
     save_gifts(gifts)
 
-    await call.message.answer(f"❌ Подарок удалён:\n{gift}")
+    await call.message.answer(f"🗑 Подарок удалён:\n<b>{removed['name']}</b>")
 
 
 # ------------------ Запуск ------------------
