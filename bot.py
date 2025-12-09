@@ -50,7 +50,6 @@ async def start(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == "show_gifts")
 async def show_gifts(call: types.CallbackQuery):
     gifts = load_gifts()
-
     if not gifts:
         await call.message.answer("🎁 Список подарков пуст.")
         return
@@ -93,7 +92,6 @@ async def add_gift_start(call: types.CallbackQuery):
 
 async def add_gift_finish(message: types.Message):
     text = message.text.strip()
-
     if "|" not in text:
         return await message.answer("❌ Неверный формат.\nПример: Наушники | https://...")
 
@@ -127,7 +125,6 @@ async def remove_gift_start(call: types.CallbackQuery):
 async def remove_gift_finish(call: types.CallbackQuery):
     idx = int(call.data.replace("del_", ""))
     gifts = load_gifts()
-
     if idx >= len(gifts):
         return await call.message.answer("❌ Ошибка: подарок не найден.")
 
@@ -146,7 +143,6 @@ async def toggle_buy_list(call: types.CallbackQuery):
     for idx, g in enumerate(gifts):
         mark = "✔️" if g.get("taken") else "❌"
         kb.add(InlineKeyboardButton(f"{mark} {g['name']}", callback_data=f"buy_{idx}"))
-
     kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel"))
     await call.message.answer("Выберите подарок:", reply_markup=kb)
 
@@ -205,20 +201,29 @@ async def edit_finish(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == "clear_chat")
 async def clear_chat(call: types.CallbackQuery):
     user_id = call.from_user.id
+    chat_id = call.message.chat.id
 
     if user_id == ADMIN_ID:
         try:
-            async for msg in bot.get_chat(call.message.chat.id).iter_messages():
-                await bot.delete_message(call.message.chat.id, msg.message_id)
-            await call.message.answer("🧹 Чат полностью очищен администратором!")
-        except Exception as e:
-            await call.message.answer(f"❌ Не удалось очистить чат: {e}")
-    else:
-        try:
-            await bot.delete_message(call.message.chat.id, call.message.message_id)
-            await call.message.answer("🧹 Ваши сообщения удалены (только что).")
+            # Получаем последние 50 сообщений (бот должен быть админом с правом delete_messages)
+            messages = await call.message.chat.get_history(limit=50)
+            deleted_count = 0
+            for msg in messages:
+                try:
+                    await bot.delete_message(chat_id, msg.message_id)
+                    deleted_count += 1
+                except:
+                    continue
+            await call.message.answer(f"🧹 Админ: удалено {deleted_count} сообщений.")
         except Exception as e:
             await call.message.answer(f"❌ Не удалось удалить сообщения: {e}")
+    else:
+        # Обычный пользователь удаляет только своё сообщение
+        try:
+            await bot.delete_message(chat_id, call.message.message_id)
+            await call.message.answer("🧹 Ваше сообщение удалено.")
+        except Exception as e:
+            await call.message.answer(f"❌ Не удалось удалить сообщение: {e}")
 
 # ------------------ Запуск ------------------
 if __name__ == "__main__":
