@@ -12,6 +12,9 @@ dp = Dispatcher(bot)
 
 GIFTS_FILE = "gifts.json"
 
+# ------------------ Хранилище последних сообщений ------------------
+last_messages = []  # хранит message_id последних сообщений бота для очистки
+
 # ------------------ Работа с файлами ------------------
 def load_gifts():
     if not os.path.exists(GIFTS_FILE):
@@ -44,14 +47,16 @@ async def start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         keyboard.add(InlineKeyboardButton("⚙️ Админка", callback_data="admin_panel"))
 
-    await message.answer("Добро пожаловать! 👋", reply_markup=keyboard)
+    msg = await message.answer("Добро пожаловать! 👋", reply_markup=keyboard)
+    last_messages.append(msg.message_id)
 
 # ------------------ Показ подарков ------------------
 @dp.callback_query_handler(lambda c: c.data == "show_gifts")
 async def show_gifts(call: types.CallbackQuery):
     gifts = load_gifts()
     if not gifts:
-        await call.message.answer("🎁 Список подарков пуст.")
+        msg = await call.message.answer("🎁 Список подарков пуст.")
+        last_messages.append(msg.message_id)
         return
 
     text = "<b>🎁 Список подарков:</b>\n\n"
@@ -60,7 +65,8 @@ async def show_gifts(call: types.CallbackQuery):
         text += f"{idx}. <b>{gift['name']}</b>{taken_mark}\n"
         text += f"🔗 <a href=\"{gift['url']}\">Открыть ссылку</a>\n\n"
 
-    await call.message.answer(text)
+    msg = await call.message.answer(text)
+    last_messages.append(msg.message_id)
 
 # ------------------ Админка ------------------
 @dp.callback_query_handler(lambda c: c.data == "admin_panel")
@@ -76,7 +82,8 @@ async def admin_panel(call: types.CallbackQuery):
     keyboard.add(InlineKeyboardButton("📄 Показать подарки", callback_data="show_gifts"))
     keyboard.add(InlineKeyboardButton("🧹 Очистить чат", callback_data="clear_chat"))
 
-    await call.message.answer("⚙️ Админ-панель", reply_markup=keyboard)
+    msg = await call.message.answer("⚙️ Админ-панель", reply_markup=keyboard)
+    last_messages.append(msg.message_id)
 
 # ------------------ Добавление подарка ------------------
 @dp.callback_query_handler(lambda c: c.data == "add_gift")
@@ -84,10 +91,11 @@ async def add_gift_start(call: types.CallbackQuery):
     if call.from_user.id != ADMIN_ID:
         return
 
-    await call.message.answer(
+    msg = await call.message.answer(
         "Введите подарок в формате:\n\n<b>Название | https://ссылка</b>",
         reply_markup=back_keyboard()
     )
+    last_messages.append(msg.message_id)
     dp.register_message_handler(add_gift_finish, state=None)
 
 async def add_gift_finish(message: types.Message):
@@ -100,7 +108,8 @@ async def add_gift_finish(message: types.Message):
     gifts.append({"name": name, "url": url, "taken": False})
     save_gifts(gifts)
 
-    await message.answer(f"🎉 Подарок добавлен:\n<b>{name}</b>\n🔗 {url}")
+    msg = await message.answer(f"🎉 Подарок добавлен:\n<b>{name}</b>\n🔗 {url}")
+    last_messages.append(msg.message_id)
     dp.message_handlers.unregister(add_gift_finish)
 
 # ------------------ Удаление подарка ------------------
@@ -111,7 +120,9 @@ async def remove_gift_start(call: types.CallbackQuery):
 
     gifts = load_gifts()
     if not gifts:
-        return await call.message.answer("❗ Список пуст.")
+        msg = await call.message.answer("❗ Список пуст.")
+        last_messages.append(msg.message_id)
+        return
 
     keyboard = InlineKeyboardMarkup()
     for idx, gift in enumerate(gifts):
@@ -119,32 +130,39 @@ async def remove_gift_start(call: types.CallbackQuery):
             InlineKeyboardButton(f"Удалить «{gift['name']}»", callback_data=f"del_{idx}")
         )
     keyboard.add(InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel"))
-    await call.message.answer("Выберите подарок для удаления:", reply_markup=keyboard)
+    msg = await call.message.answer("Выберите подарок для удаления:", reply_markup=keyboard)
+    last_messages.append(msg.message_id)
 
 @dp.callback_query_handler(lambda c: c.data.startswith("del_"))
 async def remove_gift_finish(call: types.CallbackQuery):
     idx = int(call.data.replace("del_", ""))
     gifts = load_gifts()
     if idx >= len(gifts):
-        return await call.message.answer("❌ Ошибка: подарок не найден.")
+        msg = await call.message.answer("❌ Ошибка: подарок не найден.")
+        last_messages.append(msg.message_id)
+        return
 
     removed = gifts.pop(idx)
     save_gifts(gifts)
-    await call.message.answer(f"🗑 Подарок удалён:\n<b>{removed['name']}</b>")
+    msg = await call.message.answer(f"🗑 Подарок удалён:\n<b>{removed['name']}</b>")
+    last_messages.append(msg.message_id)
 
 # ------------------ Отметить как купленный ------------------
 @dp.callback_query_handler(lambda c: c.data == "toggle_buy")
 async def toggle_buy_list(call: types.CallbackQuery):
     gifts = load_gifts()
     if not gifts:
-        return await call.message.answer("Список пуст.")
+        msg = await call.message.answer("Список пуст.")
+        last_messages.append(msg.message_id)
+        return
 
     kb = InlineKeyboardMarkup()
     for idx, g in enumerate(gifts):
         mark = "✔️" if g.get("taken") else "❌"
         kb.add(InlineKeyboardButton(f"{mark} {g['name']}", callback_data=f"buy_{idx}"))
     kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel"))
-    await call.message.answer("Выберите подарок:", reply_markup=kb)
+    msg = await call.message.answer("Выберите подарок:", reply_markup=kb)
+    last_messages.append(msg.message_id)
 
 @dp.callback_query_handler(lambda c: c.data.startswith("buy_"))
 async def toggle_buy_finish(call: types.CallbackQuery):
@@ -154,7 +172,8 @@ async def toggle_buy_finish(call: types.CallbackQuery):
     save_gifts(gifts)
 
     state = "куплен" if gifts[idx]["taken"] else "не куплен"
-    await call.message.answer(f"🛒 Статус обновлён: <b>{gifts[idx]['name']}</b> — {state}")
+    msg = await call.message.answer(f"🛒 Статус обновлён: <b>{gifts[idx]['name']}</b> — {state}")
+    last_messages.append(msg.message_id)
 
 # ------------------ Редактирование подарка ------------------
 edit_memory = {}  # временное хранилище
@@ -166,16 +185,18 @@ async def edit_choose(call: types.CallbackQuery):
     for idx, g in enumerate(gifts):
         kb.add(InlineKeyboardButton(g["name"], callback_data=f"edit_{idx}"))
     kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel"))
-    await call.message.answer("Выберите подарок для редактирования:", reply_markup=kb)
+    msg = await call.message.answer("Выберите подарок для редактирования:", reply_markup=kb)
+    last_messages.append(msg.message_id)
 
 @dp.callback_query_handler(lambda c: c.data.startswith("edit_"))
 async def edit_start(call: types.CallbackQuery):
     idx = int(call.data.replace("edit_", ""))
     edit_memory[call.from_user.id] = idx
-    await call.message.answer(
+    msg = await call.message.answer(
         "Введите новый формат:\n<b>Название | ссылка</b>",
         reply_markup=back_keyboard()
     )
+    last_messages.append(msg.message_id)
     dp.register_message_handler(edit_finish, state=None)
 
 async def edit_finish(message: types.Message):
@@ -193,7 +214,8 @@ async def edit_finish(message: types.Message):
     gifts[idx]["url"] = url
     save_gifts(gifts)
 
-    await message.answer("✏️ Подарок обновлён!")
+    msg = await message.answer("✏️ Подарок обновлён!")
+    last_messages.append(msg.message_id)
     dp.message_handlers.unregister(edit_finish)
     del edit_memory[message.from_user.id]
 
@@ -204,21 +226,16 @@ async def clear_chat(call: types.CallbackQuery):
     chat_id = call.message.chat.id
 
     if user_id == ADMIN_ID:
-        try:
-            # Получаем последние 50 сообщений (бот должен быть админом с правом delete_messages)
-            messages = await call.message.chat.get_history(limit=50)
-            deleted_count = 0
-            for msg in messages:
-                try:
-                    await bot.delete_message(chat_id, msg.message_id)
-                    deleted_count += 1
-                except:
-                    continue
-            await call.message.answer(f"🧹 Админ: удалено {deleted_count} сообщений.")
-        except Exception as e:
-            await call.message.answer(f"❌ Не удалось удалить сообщения: {e}")
+        deleted_count = 0
+        for msg_id in last_messages:
+            try:
+                await bot.delete_message(chat_id, msg_id)
+                deleted_count += 1
+            except:
+                continue
+        last_messages.clear()
+        await call.message.answer(f"🧹 Админ: удалено {deleted_count} сообщений (только сообщения бота).")
     else:
-        # Обычный пользователь удаляет только своё сообщение
         try:
             await bot.delete_message(chat_id, call.message.message_id)
             await call.message.answer("🧹 Ваше сообщение удалено.")
